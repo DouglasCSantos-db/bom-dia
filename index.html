@@ -1,0 +1,1541 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Bom dia, Jéssica</title>
+<!--
+  ============================================================
+  CARTA EM PIXEL ART PARA A JÉSSICA
+  Feita pelo Douglas (com uma ajudinha do Cláudio 😄)
+
+  Como a página funciona, em camadas (de trás para frente):
+    1. #ceu      -> canvas com a paisagem (amanhecer -> noite)
+    2. #moldura  -> canvas com buquês, chocolates, pétalas e corações
+    3. #palco    -> envelope no centro (depois some)
+    4. #carta    -> a carta com a foto e o texto
+
+  Tudo é desenhado em baixa resolução e ampliado com
+  image-rendering: pixelated, por isso fica com cara de pixel art.
+  ============================================================
+-->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Pixelify+Sans:wght@400;600&family=Press+Start+2P&display=swap">
+<style>
+  /* Layout: paisagem em tela cheia, moldura de flores nas bordas e a carta no meio,
+     sempre com uma faixa de céu visível entre a moldura e a carta. */
+  :root {
+    /* Paleta: rosa, roxo, lilás, dourado e verde */
+    --rosa: #f7a1c4;
+    --rosa-claro: #ffc6de;
+    --rosa-forte: #e0609a;
+    --roxo: #6b3fa0;
+    --roxo-escuro: #3d2266;
+    --lilas: #c9a7eb;
+    --dourado: #f2c14e;
+    --dourado-claro: #ffe9a0;
+    --verde: #4caf50;
+    --creme: #fff4dc;
+    --creme-escuro: #f1dfb8;
+    --tinta: #3a2350;          /* cor do texto da carta */
+    --fundo: #1b1030;          /* aparece só antes do céu ser desenhado */
+
+    /* Fontes: Press Start 2P nos títulos e botões, Pixelify Sans no texto (mais fácil de ler) */
+    --fonte-titulo: "Press Start 2P", ui-monospace, "Courier New", monospace;
+    --fonte-texto: "Pixelify Sans", ui-monospace, "Courier New", monospace;
+
+    /* Medidas da moldura (o JavaScript usa os mesmos números) */
+    --banda: 96px;     /* altura da moldura em cima e embaixo */
+    --lado: 96px;      /* largura da moldura nas laterais */
+    --respiro: 24px;   /* faixa de céu entre a moldura e a carta */
+    --env: 5px;        /* tamanho de cada "pixel" do envelope */
+    --foto: 2;         /* quantas vezes a foto é ampliada */
+    color-scheme: light;
+  }
+  /* Celular: moldura mais fina nas laterais, flores grandes só em cima e embaixo */
+  @media (max-width: 640px) {
+    :root { --banda: 64px; --lado: 20px; --respiro: 26px; --env: 4px; }
+  }
+  /* Tela grande: foto um pouco maior */
+  @media (min-width: 1000px) and (min-height: 880px) {
+    :root { --foto: 3; }
+  }
+
+  [hidden] { display: none !important; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    overflow: hidden;              /* a página não rola; quem rola é a carta */
+    background: var(--fundo);
+    color: var(--tinta);
+    font-family: var(--fonte-texto);
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  /* ---------- Camadas de canvas (céu e moldura) ---------- */
+  .camada {
+    position: fixed;
+    left: 0;
+    top: 0;
+    pointer-events: none;
+    image-rendering: crisp-edges;
+    image-rendering: pixelated;    /* amplia sem borrar: o segredo da pixel art */
+  }
+  #ceu { z-index: 0; }
+  #moldura { z-index: 1; }
+
+  /* ---------- Palco do envelope ---------- */
+  #palco {
+    position: fixed;
+    inset: 0;
+    z-index: 2;
+    display: grid;
+    place-items: center;
+    padding-inline: 16px;
+  }
+  .area-envelope {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 28px;
+    transition: opacity .6s ease, transform .6s ease;
+  }
+  .area-envelope.sumindo { opacity: 0; transform: scale(.92); pointer-events: none; }
+
+  #envelope {
+    all: unset;
+    position: relative;
+    display: block;
+    cursor: pointer;
+    width: calc(48 * var(--env));
+    height: calc(32 * var(--env));
+    animation: flutuar 3.4s ease-in-out infinite;
+  }
+  #envelope:focus-visible { outline: 4px dashed var(--dourado); outline-offset: 12px; }
+  #envelope canvas {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    image-rendering: crisp-edges;
+    image-rendering: pixelated;
+  }
+  #envFundo { height: 100%; z-index: 1; filter: drop-shadow(calc(1.2 * var(--env)) calc(1.2 * var(--env)) 0 rgba(61, 34, 102, .45)); }
+  #envFrente { height: 100%; z-index: 3; }
+
+  /* A cartinha que fica dentro do envelope */
+  #papelMini {
+    position: absolute;
+    z-index: 2;
+    left: calc(5 * var(--env));
+    top: calc(3 * var(--env));
+    width: calc(38 * var(--env));
+    height: calc(26 * var(--env));
+    background:
+      repeating-linear-gradient(to bottom, transparent 0 calc(3 * var(--env)), var(--lilas) calc(3 * var(--env)) calc(3 * var(--env) + 2px)) var(--creme);
+    background-clip: content-box;
+    padding: calc(2 * var(--env)) calc(3 * var(--env));
+    box-sizing: border-box;
+    outline: 2px solid var(--roxo);
+    transition: transform 1s cubic-bezier(.3, .7, .3, 1) .85s;
+  }
+
+  /* A aba do envelope gira para cima ao abrir */
+  .env-aba {
+    position: absolute;
+    z-index: 4;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: calc(20 * var(--env));
+    transform-origin: top center;
+    transform: perspective(700px) rotateX(0deg);
+    transition: transform .9s ease, z-index 0s .45s;
+  }
+  .env-aba canvas { height: 100%; }
+  .env-para {
+    position: absolute;
+    z-index: 5;
+    left: 0;
+    right: 0;
+    bottom: calc(4 * var(--env));
+    text-align: center;
+    font-family: var(--fonte-titulo);
+    font-size: calc(2 * var(--env));
+    color: var(--roxo-escuro);
+    pointer-events: none;
+  }
+  #envelope.aberto { animation: none; }
+  #envelope.aberto .env-aba { transform: perspective(700px) rotateX(180deg); z-index: 0; }
+  #envelope.aberto #papelMini { transform: translateY(calc(-17 * var(--env))); }
+
+  .dica-abrir {
+    margin: 0;
+    font-family: var(--fonte-titulo);
+    font-size: 12px;
+    line-height: 1.6;
+    color: var(--creme);
+    text-shadow: 2px 0 0 var(--roxo-escuro), -2px 0 0 var(--roxo-escuro), 0 2px 0 var(--roxo-escuro), 0 -2px 0 var(--roxo-escuro), 3px 3px 0 var(--roxo-escuro);
+    animation: piscar 1.6s steps(2, jump-none) infinite;
+    pointer-events: none;
+  }
+
+  /* ---------- A carta ---------- */
+  #carta {
+    position: fixed;
+    z-index: 3;
+    inset: 0;
+    margin: auto;                         /* centraliza sem usar transform */
+    width: min(55vw, 760px, calc(100vw - 2 * var(--lado) - 48px));
+    height: calc(100vh - 2 * var(--banda) - 2 * var(--respiro));
+    height: calc(100dvh - 2 * var(--banda) - 2 * var(--respiro));
+    max-height: 980px;
+    min-width: 280px;
+    transform-origin: top left;
+    display: flex;
+    flex-direction: column;
+    background-color: var(--creme);
+    background-image: var(--textura-papel, none);
+    background-size: 8px 8px;
+    image-rendering: pixelated;
+    border: 4px solid var(--roxo);
+    box-shadow:
+      6px 6px 0 var(--roxo-escuro),
+      inset 0 0 0 5px var(--creme),
+      inset 0 0 0 7px var(--lilas);
+  }
+  @media (max-width: 640px) {
+    #carta { width: calc(100vw - 2 * var(--lado) - 16px); min-width: 0; }
+  }
+
+  .rolagem {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding: 30px clamp(18px, 4vw, 46px) 34px;
+    opacity: 0;
+    transition: opacity .7s ease;
+    scrollbar-width: thin;
+    scrollbar-color: var(--roxo) var(--creme-escuro);
+  }
+  #carta.pronta .rolagem { opacity: 1; }
+  .rolagem::-webkit-scrollbar { width: 12px; }
+  .rolagem::-webkit-scrollbar-track { background: var(--creme-escuro); }
+  .rolagem::-webkit-scrollbar-thumb { background: var(--roxo); border: 3px solid var(--creme-escuro); }
+
+  /* ---------- Polaroid com as fotos ---------- */
+  .polaroid {
+    margin: 6px auto 30px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 14px;
+  }
+  .polaroid-caixa { position: relative; }
+  .vira {
+    all: unset;
+    display: block;
+    cursor: pointer;
+    perspective: 900px;
+  }
+  .vira:focus-visible { outline: 3px dashed var(--roxo); outline-offset: 8px; }
+  .vira-interno {
+    display: grid;
+    transform-style: preserve-3d;
+    transition: transform 1.1s cubic-bezier(.4, .1, .2, 1);
+  }
+  .vira.virada .vira-interno { transform: rotateY(180deg); }
+  .face {
+    grid-area: 1 / 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 12px 12px 0;
+    background: var(--rosa);
+    border: 4px solid var(--roxo);
+    box-shadow: 5px 5px 0 var(--roxo-escuro);
+    backface-visibility: hidden;
+    -webkit-backface-visibility: hidden;
+  }
+  .face.verso { transform: rotateY(180deg); }
+  .foto {
+    display: block;
+    width: calc(72px * var(--foto));
+    height: auto;
+    max-width: 100%;
+    image-rendering: crisp-edges;
+    image-rendering: pixelated;
+    border: 3px solid var(--roxo-escuro);
+    background: var(--creme);
+  }
+  .legenda {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 0 12px;
+    font-size: 19px;
+    font-weight: 600;
+    color: var(--roxo-escuro);
+  }
+  /* Lírios nos cantos da polaroid */
+  .canto {
+    position: absolute;
+    z-index: 2;
+    width: 45px;
+    height: 45px;
+    image-rendering: pixelated;
+    pointer-events: none;
+  }
+  .canto.c1 { left: -20px; top: -20px; }
+  .canto.c2 { right: -20px; top: -20px; }
+  .canto.c3 { left: -20px; bottom: -16px; }
+  .canto.c4 { right: -20px; bottom: -16px; }
+  .dica-foto {
+    margin: 0;
+    font-size: 15px;
+    color: var(--roxo);
+  }
+
+  /* ---------- Texto da carta ---------- */
+  .texto {
+    max-width: 60ch;
+    margin: 0 auto;
+    font-size: clamp(18px, 1rem + .35vw, 22px);
+    line-height: 1.55;
+    color: var(--tinta);
+    cursor: default;
+  }
+  .texto p { margin: 0 0 .85em; }
+  .texto .saudacao { font-size: 1.4em; font-weight: 600; color: var(--roxo); margin-bottom: .7em; }
+  .texto .assinatura { margin-top: 1.5em; margin-bottom: .1em; }
+  .texto .nome { font-size: 1.35em; font-weight: 600; color: var(--rosa-forte); }
+  .texto .final {
+    margin: 1.8em auto .4em;
+    padding: 16px 18px;
+    text-align: center;
+    font-size: 1.12em;
+    font-weight: 600;
+    color: var(--roxo-escuro);
+    background: var(--rosa-claro);
+    border: 4px solid var(--roxo);
+    animation: brilho 2.6s ease-in-out infinite;
+  }
+  .icone {
+    display: inline-block;
+    width: 1.15em;
+    height: 1.15em;
+    vertical-align: -.18em;
+    margin: 0 .08em;
+    image-rendering: pixelated;
+  }
+  .cursor {
+    display: inline-block;
+    width: .5em;
+    height: 1em;
+    margin-left: 2px;
+    vertical-align: -.14em;
+    background: var(--roxo);
+    animation: piscar 1s steps(2, jump-none) infinite;
+  }
+
+  /* ---------- Botões ---------- */
+  .botao {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: 26px auto 6px;
+    padding: 15px 20px;
+    font-family: var(--fonte-titulo);
+    font-size: 13px;
+    line-height: 1.6;
+    color: var(--roxo-escuro);
+    background: var(--rosa);
+    border: 4px solid var(--roxo);
+    border-radius: 0;
+    box-shadow: 4px 4px 0 var(--roxo-escuro);
+    cursor: pointer;
+    transition: transform .25s ease, box-shadow .25s ease, background-color .25s ease;
+  }
+  .botao:hover, .botao:focus-visible {
+    transform: scale(1.06);
+    background: var(--rosa-claro);
+    box-shadow: 4px 4px 0 var(--roxo-escuro), 0 0 0 4px var(--dourado), 0 0 0 8px rgba(242, 193, 78, .35);
+    outline: none;
+  }
+  .botao:active { transform: translate(2px, 2px); box-shadow: 2px 2px 0 var(--roxo-escuro); }
+  .botao .icone { width: 18px; height: 18px; }
+  .surgir { animation: surgir .8s ease both; }
+
+  .mostrar-tudo {
+    all: unset;
+    display: block;
+    padding: 10px 14px;
+    text-align: center;
+    font-size: 15px;
+    color: var(--roxo);
+    background: var(--creme-escuro);
+    border-top: 3px dashed var(--lilas);
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity .7s ease;
+  }
+  #carta.pronta .mostrar-tudo { opacity: 1; }
+  .mostrar-tudo:focus-visible { outline: 3px dashed var(--roxo); outline-offset: -6px; }
+
+  /* Texto só para leitores de tela */
+  .so-leitor {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+
+  /* ---------- Animações ---------- */
+  @keyframes flutuar {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-12px); }
+  }
+  @keyframes piscar {
+    0% { opacity: 1; }
+    100% { opacity: .2; }
+  }
+  @keyframes brilho {
+    0%, 100% { box-shadow: 4px 4px 0 var(--roxo-escuro), 0 0 0 3px var(--dourado); }
+    50% { box-shadow: 4px 4px 0 var(--roxo-escuro), 0 0 0 6px var(--dourado-claro), 0 0 0 10px rgba(242, 193, 78, .3); }
+  }
+  @keyframes surgir {
+    from { opacity: 0; transform: translateY(12px); }
+    to { opacity: 1; transform: none; }
+  }
+
+  /* Quem pede menos movimento no celular/computador recebe uma versão calma */
+  @media (prefers-reduced-motion: reduce) {
+    #envelope, .dica-abrir, .cursor, .texto .final { animation: none; }
+    .vira-interno, .env-aba, #papelMini, #carta { transition-duration: .01s !important; }
+  }
+</style>
+</head>
+<body>
+
+
+<!-- Camadas de fundo -->
+<canvas id="ceu" class="camada" aria-hidden="true"></canvas>
+<canvas id="moldura" class="camada" aria-hidden="true"></canvas>
+
+<!-- Envelope -->
+<main id="palco">
+  <div class="area-envelope" id="areaEnvelope">
+    <button id="envelope" type="button" aria-label="Abrir a carta">
+      <canvas id="envFundo" width="48" height="32"></canvas>
+      <div id="papelMini"></div>
+      <canvas id="envFrente" width="48" height="32"></canvas>
+      <div class="env-aba"><canvas id="envAba" width="48" height="20"></canvas></div>
+      <span class="env-para">Para: Jéssica</span>
+    </button>
+    <p class="dica-abrir" id="dicaAbrir">Clique para abrir</p>
+  </div>
+</main>
+
+<!-- Carta -->
+<section id="carta" hidden aria-label="Carta para a Jéssica">
+  <div class="rolagem" id="rolagem">
+    <figure class="polaroid">
+      <div class="polaroid-caixa">
+        <button class="vira" id="vira" type="button" aria-label="Virar a foto">
+          <span class="vira-interno">
+            <span class="face frente">
+              <img class="foto" id="foto1" src="foto-pixel.png" alt="Foto da Jéssica em pixel art">
+              <span class="legenda">Jéssica <img class="icone" data-icone="flor" alt=""></span>
+            </span>
+            <span class="face verso">
+              <img class="foto" id="foto2" src="foto-pixel-2.png" alt="Outra foto da Jéssica em pixel art">
+              <span class="legenda">Jéssica <img class="icone" data-icone="coracao" alt=""></span>
+            </span>
+          </span>
+        </button>
+        <img class="canto c1" data-icone="lirioBranco" alt="">
+        <img class="canto c2" data-icone="lirioRosado" alt="">
+        <img class="canto c3" data-icone="lirioRosado" alt="">
+        <img class="canto c4" data-icone="lirioBranco" alt="">
+      </div>
+      <figcaption class="dica-foto">toque na foto para virar</figcaption>
+    </figure>
+
+    <div class="texto" id="texto" aria-hidden="true"></div>
+    <p class="so-leitor" id="textoLeitor"></p>
+
+    <button class="botao" id="lerDeNovo" type="button" hidden>Ler de novo <img class="icone" data-icone="flor" alt=""></button>
+  </div>
+  <button class="mostrar-tudo" id="mostrarTudo" type="button">toque no texto para mostrar tudo</button>
+</section>
+
+<script>
+(() => {
+  'use strict';
+
+  /* ============================================================
+     0. CONFIGURAÇÕES GERAIS
+     ============================================================ */
+  const reduzMovimento = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const telaDeToque = matchMedia('(pointer: coarse)').matches;
+  const ehCelular = () => innerWidth <= 640;
+
+  // O texto da carta. {flor}, {lua} e {brilho} viram desenhos em pixel art.
+  const LINHAS = [
+    { classe: 'saudacao', texto: 'Bom dia, Jéssica! {flor}' },
+    { texto: 'Espero que seu dia tenha começado leve e com um café bem gostoso.' },
+    { texto: 'Ainda estamos nos conhecendo, mas já deu pra perceber que conversar com você é uma das partes boas do meu dia.' },
+    { texto: 'Então resolvi te mandar esse bom dia de um jeito diferente, feito com carinho, cheio de flores e com um pouquinho de criatividade.' },
+    { texto: 'Os lírios estão aí porque achei que combinam com você: são delicados, bonitos e chamam atenção sem precisar fazer esforço.' },
+    { texto: 'Que hoje te traga motivos pra sorrir, e se faltar algum, pode contar comigo pra tentar arrumar um.' },
+    { classe: 'assinatura', texto: 'Com carinho,' },
+    { classe: 'nome', texto: 'Douglas' },
+    { classe: 'final', texto: 'Tenha um ótimo dia... e, quando ele acabar, uma boa noite também. {lua}{brilho}' }
+  ];
+
+  // Gerador de números "aleatórios" que sempre dá o mesmo resultado (as flores não mudam de lugar)
+  function sorteador(semente) {
+    return function () {
+      semente |= 0; semente = semente + 0x6D2B79F5 | 0;
+      let t = Math.imul(semente ^ semente >>> 15, 1 | semente);
+      t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+      return ((t ^ t >>> 14) >>> 0) / 4294967296;
+    };
+  }
+  const limitar = (v, min, max) => Math.max(min, Math.min(max, v));
+
+  /* ============================================================
+     1. FERRAMENTAS DE PIXEL ART
+     Um sprite é uma "grade": uma lista de linhas, cada uma com cores (ou null = transparente).
+     ============================================================ */
+  function novoCanvas(l, a) {
+    const c = document.createElement('canvas');
+    c.width = l; c.height = a;
+    return c;
+  }
+  function gradeVazia(l, a) {
+    return Array.from({ length: a }, () => Array(l).fill(null));
+  }
+  // Converte um desenho feito com letras em grade de cores
+  function gradeDeTexto(linhas, cores) {
+    return linhas.map(linha => [...linha].map(ch => cores[ch] || null));
+  }
+  // Pinta a grade num canvas, 1 quadradinho = 1 pixel
+  function gradeParaCanvas(grade) {
+    const c = novoCanvas(grade[0].length, grade.length), g = c.getContext('2d');
+    grade.forEach((linha, y) => linha.forEach((cor, x) => {
+      if (cor) { g.fillStyle = cor; g.fillRect(x, y, 1, 1); }
+    }));
+    return c;
+  }
+  const vizinhos = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+  const vazio = (grade, x, y) => y < 0 || y >= grade.length || x < 0 || x >= grade[0].length || !grade[y][x];
+  // Contorno por fora (deixa o desenho "recortado", típico de pixel art)
+  function contornoExterno(grade, cor) {
+    const nova = grade.map(l => l.slice());
+    grade.forEach((linha, y) => linha.forEach((c, x) => {
+      if (c) return;
+      if (vizinhos.some(([dx, dy]) => !vazio(grade, x + dx, y + dy))) nova[y][x] = cor;
+    }));
+    return nova;
+  }
+  // Contorno por dentro (mantém o tamanho do desenho)
+  function contornoInterno(grade, cor) {
+    const nova = grade.map(l => l.slice());
+    grade.forEach((linha, y) => linha.forEach((c, x) => {
+      if (c && vizinhos.some(([dx, dy]) => vazio(grade, x + dx, y + dy))) nova[y][x] = cor;
+    }));
+    return nova;
+  }
+
+  /* ============================================================
+     2. SPRITES (desenhos)
+     ============================================================ */
+
+  // ---- Lírio: 6 pétalas longas e abertas, listra no meio e estames com pólen ----
+  function criarLirio(raio, cores) {
+    const tam = raio * 2 + 3, centro = raio + 1;
+    let grade = gradeVazia(tam, tam);
+    const eixos = [0, 60, 120, 180, 240, 300].map(a => a * Math.PI / 180);
+    for (let y = 0; y < tam; y++) {
+      for (let x = 0; x < tam; x++) {
+        const dx = x - centro, dy = y - centro, r = Math.hypot(dx, dy);
+        if (r > raio + .45) continue;
+        const ang = Math.atan2(dy, dx);
+        let dif = Math.PI;
+        for (const e of eixos) {
+          let d = Math.abs(ang - e) % (Math.PI * 2);
+          if (d > Math.PI) d = Math.PI * 2 - d;
+          dif = Math.min(dif, d);
+        }
+        const distLateral = Math.abs(r * Math.sin(dif));
+        const meiaLargura = 1.55 * (1 - Math.pow(r / (raio + .9), 2)) + .35;
+        if (r < 1.6 || (Math.cos(dif) > 0 && distLateral <= meiaLargura)) {
+          let cor = cores.petala;
+          if (r > 1.5 && distLateral < .55) cor = cores.listra;           // listra no meio da pétala
+          else if (distLateral > meiaLargura - .75 && r > 2) cor = cores.sombra;
+          grade[y][x] = cor;
+        }
+      }
+    }
+    grade = contornoExterno(grade, cores.contorno);
+    // miolo verdinho e pintinhas
+    grade[centro][centro] = '#c8e6a0';
+    [[-1, 1], [1, 1], [-2, 0], [2, 0]].forEach(([dx, dy]) => {
+      if (raio >= 5 && grade[centro + dy][centro + dx]) grade[centro + dy][centro + dx] = cores.pinta;
+    });
+    // estames: filamentos subindo, com pólen laranja na ponta
+    const filamento = '#a5c95a', polen = '#d2691e';
+    const hastes = raio >= 5
+      ? [[[0, -1], [0, -2], [0, -3]], [[-1, -1], [-2, -2], [-2, -3]], [[1, -1], [2, -2], [2, -3]]]
+      : [[[0, -1]], [[-1, -1]], [[1, -1]]];
+    hastes.forEach(h => {
+      h.forEach(([dx, dy]) => { grade[centro + dy][centro + dx] = filamento; });
+      const [ux, uy] = h[h.length - 1];
+      grade[centro + uy - 1][centro + ux] = polen;
+    });
+    return gradeParaCanvas(grade);
+  }
+  const CORES_LIRIO_BRANCO = { petala: '#fffaf5', sombra: '#e6dbf2', listra: '#f6b3cf', contorno: '#8f6bbd', pinta: '#d9558f' };
+  const CORES_LIRIO_ROSADO = { petala: '#ffc6de', sombra: '#f39cc2', listra: '#e0609a', contorno: '#9c2f66', pinta: '#b8285f' };
+
+  // ---- Rosa ----
+  const DESENHO_ROSA = [
+    '..ooo..',
+    '.oRrRo.',
+    'oRrdrRo',
+    'oRdrdRo',
+    'oRrddRo',
+    '.oRRRo.',
+    '..ooo..'
+  ];
+  const criarRosa = (cores) => gradeParaCanvas(gradeDeTexto(DESENHO_ROSA, cores));
+  const CORES_ROSA_VERMELHA = { o: '#5c0f1f', R: '#c8243c', r: '#ee5a6a', d: '#8e1328' };
+  const CORES_ROSA_ROSA = { o: '#8a2a55', R: '#ef7fae', r: '#ffb9d4', d: '#c94f86' };
+
+  // ---- Folha ----
+  const FOLHA = gradeParaCanvas(gradeDeTexto([
+    '..gGo',
+    '.gGGo',
+    'gGGo.',
+    'oo...'
+  ], { g: '#7cc576', G: '#43a047', o: '#2e6b30' }));
+
+  // ---- Coração ----
+  const DESENHO_CORACAO = [
+    '.oo.oo.',
+    'ohpoppo',
+    'ohppppo',
+    '.opppo.',
+    '..opo..',
+    '...o...'
+  ];
+  const criarCoracao = (cores) => gradeParaCanvas(gradeDeTexto(DESENHO_CORACAO, cores));
+  const CORACOES = [
+    criarCoracao({ o: '#9c2f66', h: '#ffe0ee', p: '#f06ba8' }),
+    criarCoracao({ o: '#3d2266', h: '#e3d0fa', p: '#9b6fd6' }),
+    criarCoracao({ o: '#9c2f66', h: '#fff1f7', p: '#f7a1c4' })
+  ];
+
+  // ---- Lua e brilho (substituem os emojis 🌙✨) ----
+  const LUA = gradeParaCanvas(gradeDeTexto([
+    '..ooo..',
+    '.oLLLo.',
+    'oLLcLLo',
+    'oLLLLco',
+    'oLcLLLo',
+    '.oLLLo.',
+    '..ooo..'
+  ], { o: '#8a7a3a', L: '#fdf6c8', c: '#e2d58e' }));
+  const BRILHO = gradeParaCanvas(gradeDeTexto([
+    '...y...',
+    '...Y...',
+    '..yWy..',
+    'yYWWWYy',
+    '..yWy..',
+    '...Y...',
+    '...y...'
+  ], { y: '#c98f12', Y: '#f2c14e', W: '#fff7d6' }));
+
+  // ---- Bombom em papel dourado, numa forminha marrom ----
+  function criarBombom() {
+    const grade = gradeVazia(10, 11);
+    const cx = 4.5, cy = 4.2, r = 4;
+    for (let y = 0; y < 9; y++) for (let x = 0; x < 10; x++) {
+      const dx = x - cx, dy = y - cy;
+      if (dx * dx + dy * dy > r * r) continue;
+      let cor = '#f2c14e';                                    // dourado
+      if (dx + dy < -3.2) cor = '#fff1b8';                    // brilho em cima à esquerda
+      else if (dx + dy < -1.6) cor = '#ffdd7a';
+      else if (dx + dy > 3) cor = '#b8860b';                  // sombra embaixo à direita
+      else if (dx + dy > 1.6) cor = '#d9a531';
+      if ((x * 7 + y * 3) % 11 === 0) cor = '#c8962a';        // dobrinhas do papel
+      grade[y][x] = cor;
+    }
+    // forminha de papel marrom com pregas
+    for (let y = 7; y < 11; y++) {
+      const margem = y === 10 ? 2 : y === 9 ? 1 : 0;
+      for (let x = margem; x < 10 - margem; x++) grade[y][x] = x % 2 ? '#8b4a26' : '#6d3b1e';
+    }
+    return gradeParaCanvas(contornoInterno(grade, '#3e2412'));
+  }
+
+  // ---- Barra de chocolate ao leite com crocante branco (algumas mordidas) ----
+  function criarBarra(mordida, semente) {
+    const sorte = sorteador(semente);
+    const l = 17, a = 9;
+    const grade = gradeVazia(l, a);
+    for (let y = 0; y < a; y++) for (let x = 0; x < l; x++) {
+      let cor = '#8b5a2b';
+      if (x % 4 === 0 || y === 4) cor = '#6b4220';            // divisões dos quadradinhos
+      else if (x % 4 === 1 || y === 1 || y === 5) cor = '#a8743f'; // relevo claro
+      grade[y][x] = cor;
+    }
+    // pedacinhos de crocante branco
+    for (let i = 0; i < 9; i++) {
+      const x = 1 + Math.floor(sorte() * (l - 2)), y = 1 + Math.floor(sorte() * (a - 2));
+      if (x % 4 !== 0 && y !== 4) grade[y][x] = sorte() > .4 ? '#fff6e0' : '#efe0c0';
+    }
+    if (mordida) {
+      // tira um "semicírculo" no canto, como uma mordida
+      for (let y = 0; y < a; y++) for (let x = 0; x < l; x++) {
+        const d = Math.hypot(x - (l + .5), y + .5);
+        if (d < 5.2) grade[y][x] = null;
+        else if (d < 6.3) grade[y][x] = (x + y) % 3 ? '#5a3418' : '#fff6e0'; // parte de dentro, com crocante aparecendo
+      }
+    }
+    return gradeParaCanvas(contornoInterno(grade, '#3e2412'));
+  }
+
+  // ---- Lírios e rosas prontos ----
+  const LIRIO_BRANCO = criarLirio(6, CORES_LIRIO_BRANCO);
+  const LIRIO_ROSADO = criarLirio(6, CORES_LIRIO_ROSADO);
+  const LIRIO_MINI_BRANCO = criarLirio(3, CORES_LIRIO_BRANCO);
+  const LIRIO_MINI_ROSADO = criarLirio(3, CORES_LIRIO_ROSADO);
+  const ROSA_VERMELHA = criarRosa(CORES_ROSA_VERMELHA);
+  const ROSA_ROSA = criarRosa(CORES_ROSA_ROSA);
+  const BOMBOM = criarBombom();
+  const BARRAS = [criarBarra(false, 11), criarBarra(true, 23), criarBarra(false, 37), criarBarra(true, 51)];
+
+  // ---- Buquê: papel lilás, laço rosa, cabos verdes, lírios em destaque e rosas ----
+  // Cada buquê tem uma "base" que fica parada e "cabeças" (flores) que balançam.
+  const BUQUE_L = 34, BUQUE_A = 32;
+  function criarBuque(variante) {
+    const espelhar = variante % 2 === 1;
+    const lirioA = variante === 2 ? LIRIO_ROSADO : LIRIO_BRANCO;
+    const lirioB = variante === 2 ? LIRIO_BRANCO : LIRIO_ROSADO;
+    const cabecas = [
+      { img: LIRIO_MINI_ROSADO, x: 13, y: 0 },
+      { img: lirioA, x: 0, y: 3 },
+      { img: lirioB, x: 18, y: 2 },
+      { img: variante === 1 ? ROSA_ROSA : ROSA_VERMELHA, x: 12, y: 10 },
+      { img: variante === 1 ? ROSA_VERMELHA : ROSA_ROSA, x: 6, y: 15 },
+      { img: ROSA_VERMELHA, x: 21, y: 15 }
+    ];
+    const base = novoCanvas(BUQUE_L, BUQUE_A), g = base.getContext('2d');
+    // cabos
+    g.fillStyle = '#3e8e41';
+    cabecas.forEach(c => {
+      const fx = c.x + Math.floor(c.img.width / 2), fy = c.y + Math.floor(c.img.height / 2);
+      linhaPixel(g, fx, fy, 17, 22);
+    });
+    // folhas
+    g.drawImage(FOLHA, 4, 17);
+    g.save(); g.translate(30, 17); g.scale(-1, 1); g.drawImage(FOLHA, 0, 0); g.restore();
+    // papel do buquê (cone)
+    for (let y = 19; y < BUQUE_A; y++) {
+      const meia = Math.round(9 - (y - 19) * .55);
+      for (let x = 17 - meia; x <= 17 + meia; x++) {
+        let cor = (x - 17 + 30) % 3 === 0 ? '#a77fd6' : '#c9a7eb';
+        if (x === 17 - meia || x === 17 + meia || y === BUQUE_A - 1) cor = '#6b3fa0';
+        if (y === 19) cor = x % 2 ? '#e3d0fa' : '#6b3fa0';      // borda recortada no topo
+        g.fillStyle = cor; g.fillRect(x, y, 1, 1);
+      }
+    }
+    // laço rosa
+    const laco = gradeParaCanvas(gradeDeTexto([
+      'pp...pp',
+      'pPpkpPp',
+      'pp.k.pp',
+      '..p.p..'
+    ], { p: '#e0609a', P: '#ffb3d0', k: '#9c2f66' }));
+    g.drawImage(laco, 14, 24);
+    const resultado = { base, cabecas, espelhar };
+    return resultado;
+  }
+  // Linha reta de pixels (algoritmo de Bresenham)
+  function linhaPixel(g, x0, y0, x1, y1) {
+    const dx = Math.abs(x1 - x0), dy = -Math.abs(y1 - y0);
+    const sx = x0 < x1 ? 1 : -1, sy = y0 < y1 ? 1 : -1;
+    let erro = dx + dy;
+    for (;;) {
+      g.fillRect(x0, y0, 1, 1);
+      if (x0 === x1 && y0 === y1) break;
+      const e2 = 2 * erro;
+      if (e2 >= dy) { erro += dy; x0 += sx; }
+      if (e2 <= dx) { erro += dx; y0 += sy; }
+    }
+  }
+  const BUQUES = [criarBuque(0), criarBuque(1), criarBuque(2)];
+
+  // ---- Ícones usados no HTML (viram imagens) ----
+  const ICONES = {
+    flor: LIRIO_MINI_ROSADO,
+    lua: LUA,
+    brilho: BRILHO,
+    coracao: CORACOES[0],
+    lirioBranco: LIRIO_BRANCO,
+    lirioRosado: LIRIO_ROSADO
+  };
+  const urlIcone = {};
+  for (const nome in ICONES) urlIcone[nome] = ICONES[nome].toDataURL();
+  document.querySelectorAll('img[data-icone]').forEach(img => { img.src = urlIcone[img.dataset.icone]; });
+  function criarIcone(nome) {
+    const img = document.createElement('img');
+    img.className = 'icone';
+    img.alt = '';
+    img.src = urlIcone[nome];
+    return img;
+  }
+
+  // ---- Textura do papel da carta (pontinhos discretos) ----
+  (function texturaPapel() {
+    const c = novoCanvas(4, 4), g = c.getContext('2d');
+    g.fillStyle = '#fff4dc'; g.fillRect(0, 0, 4, 4);
+    g.fillStyle = '#f8e9c9'; g.fillRect(1, 0, 1, 1); g.fillRect(3, 2, 1, 1);
+    g.fillStyle = '#fffaf0'; g.fillRect(0, 3, 1, 1);
+    document.documentElement.style.setProperty('--textura-papel', `url(${c.toDataURL()})`);
+  })();
+
+  /* ============================================================
+     3. ENVELOPE (rosa com detalhes roxos e selo de coração)
+     ============================================================ */
+  (function desenharEnvelope() {
+    const L = 48, A = 32, ROXO = '#6b3fa0';
+    // parte de trás (o "dentro" do envelope)
+    let g = document.getElementById('envFundo').getContext('2d');
+    g.fillStyle = '#d97aa6'; g.fillRect(0, 0, L, A);
+    g.fillStyle = '#c4628f'; g.fillRect(1, 1, L - 2, 2);
+    g.fillStyle = ROXO; g.strokeStyle = ROXO;
+    g.fillRect(0, 0, L, 1); g.fillRect(0, A - 1, L, 1); g.fillRect(0, 0, 1, A); g.fillRect(L - 1, 0, 1, A);
+
+    // frente (o "bolso" em V que segura a carta)
+    let grade = gradeVazia(L, A);
+    for (let y = 0; y < A; y++) for (let x = 0; x < L; x++) {
+      const abertura = y < 19 && Math.abs(x - 23.5) < (19 - y) * 1.3;
+      if (abertura) continue;
+      let cor = '#f7a1c4';
+      // dobras diagonais que vão dos cantos de baixo até o meio
+      const naDobra = y > 18 && (Math.abs((x) - (y - 19) * 1.85) < .9 || Math.abs((L - 1 - x) - (y - 19) * 1.85) < .9);
+      if (naDobra) cor = '#e58ab4';
+      if ((x + y) % 7 === 0 && !naDobra) cor = '#f9b3d1';
+      grade[y][x] = cor;
+    }
+    // borda roxa por dentro
+    grade = contornoInterno(grade, ROXO);
+    // tira o contorno da borda de cima do V para parecer o papel cortado em rosa-escuro
+    for (let y = 0; y < A; y++) for (let x = 0; x < L; x++) {
+      if (grade[y][x] === ROXO && y > 0 && y < 19 && x > 0 && x < L - 1) grade[y][x] = '#c95c90';
+    }
+    g = document.getElementById('envFrente').getContext('2d');
+    g.drawImage(gradeParaCanvas(grade), 0, 0);
+
+    // aba (triângulo que aponta para baixo) com selo de coração roxo
+    let aba = gradeVazia(L, 20);
+    for (let y = 0; y < 20; y++) for (let x = 0; x < L; x++) {
+      if (Math.abs(x - 23.5) <= (19 - y) * 1.25 + .5) aba[y][x] = (x + y) % 6 === 0 ? '#ffc6de' : '#fbb6d2';
+    }
+    aba = contornoInterno(aba, ROXO);
+    g = document.getElementById('envAba').getContext('2d');
+    g.drawImage(gradeParaCanvas(aba), 0, 0);
+    g.drawImage(criarCoracao({ o: '#3d2266', h: '#e3d0fa', p: '#7d4fbf' }), 20, 11);
+  })();
+
+  /* ============================================================
+     4. PAISAGEM DO CÉU (muda conforme a carta avança)
+     0 = amanhecer, 1 = campo de lírios, 2 = praia à tarde, 3 = pôr do sol, 4 = noite
+     ============================================================ */
+  const ceu = document.getElementById('ceu');
+  const cg = ceu.getContext('2d');
+  const buffer = novoCanvas(1, 1), bg = buffer.getContext('2d');
+  let CW = 0, CH = 0, PX = 4;                  // tamanho do céu em "pixels" e tamanho de cada pixel
+  let estrelas = [], liriosCampo = [], conchas = [];
+  const cadentes = [];
+  let proximaCadente = 3;
+
+  function prepararCeu() {
+    PX = ehCelular() ? 3 : 4;
+    CW = Math.ceil(innerWidth / PX);
+    CH = Math.ceil(innerHeight / PX);
+    for (const c of [ceu, buffer]) { c.width = CW; c.height = CH; }
+    ceu.style.width = CW * PX + 'px';
+    ceu.style.height = CH * PX + 'px';
+    const sorte = sorteador(7);
+    estrelas = Array.from({ length: Math.round(CW * CH / 70) }, () => ({
+      x: Math.floor(sorte() * CW),
+      y: Math.floor(sorte() * CH * .66),
+      cor: ['#ffffff', '#fff3b0', '#c9d6ff', '#ffd6ec'][Math.floor(sorte() * 4)],
+      vel: .6 + sorte() * 1.8,
+      fase: sorte() * 6.28,
+      grande: sorte() < .07
+    }));
+    liriosCampo = Array.from({ length: Math.round(CW / 9) }, () => ({
+      u: sorte(),
+      frente: sorte() > .45,
+      rosado: sorte() > .55,
+      fase: sorte() * 6.28,
+      sobe: Math.floor(sorte() * 6)
+    }));
+    conchas = Array.from({ length: Math.round(CW / 6) }, () => ({ u: sorte(), v: sorte(), cor: sorte() > .5 ? '#e3be82' : '#fbe3b3' }));
+  }
+
+  // --- pincéis do céu ---
+  function faixas(g, cores, y0, y1) {
+    const n = cores.length, h = (y1 - y0) / n;
+    for (let i = 0; i < n; i++) {
+      g.fillStyle = cores[i];
+      g.fillRect(0, Math.floor(y0 + i * h), CW, Math.ceil(h) + 1);
+    }
+    // xadrezinho na divisão das cores (o "degradê" da pixel art)
+    for (let i = 1; i < n; i++) {
+      const y = Math.floor(y0 + i * h);
+      g.fillStyle = cores[i];
+      for (let x = y % 2; x < CW; x += 2) g.fillRect(x, y - 1, 1, 1);
+      g.fillStyle = cores[i - 1];
+      for (let x = (y + 1) % 2; x < CW; x += 2) g.fillRect(x, y, 1, 1);
+    }
+  }
+  function disco(g, cx, cy, r, cor) {
+    g.fillStyle = cor;
+    for (let dy = -r; dy <= r; dy++) {
+      const meia = Math.floor(Math.sqrt(r * r - dy * dy));
+      g.fillRect(cx - meia, cy + dy, meia * 2 + 1, 1);
+    }
+  }
+  function colinas(g, base, amp, freq, fase, cor) {
+    const alturas = new Array(CW);
+    g.fillStyle = cor;
+    for (let x = 0; x < CW; x++) {
+      const y = Math.round(base + Math.sin(x * freq + fase) * amp + Math.sin(x * freq * 2.7 + fase * 1.3) * amp * .35);
+      alturas[x] = y;
+      g.fillRect(x, y, 1, CH - y);
+    }
+    return alturas;
+  }
+  function nuvens(g, t, branco, sombra, altura) {
+    const lista = [[.05, .10, 24, 1.6], [.38, .18, 18, 1.1], [.62, .07, 28, 1.9], [.86, .22, 16, .8]];
+    for (const [u, v, l, vel] of lista) {
+      const x = Math.round(((u * (CW + 60) + t * vel) % (CW + 60)) - 40);
+      const y = Math.round(v * CH * altura);
+      g.fillStyle = branco;
+      g.fillRect(x, y + 3, l, 4);
+      g.fillRect(x + 3, y + 1, Math.round(l * .45), 3);
+      g.fillRect(x + Math.round(l * .4), y, Math.round(l * .35), 4);
+      g.fillStyle = sombra;
+      g.fillRect(x + 1, y + 7, l - 2, 1);
+    }
+  }
+
+  // --- 0. amanhecer ---
+  function amanhecer(g, t) {
+    const hz = Math.round(CH * .64);
+    faixas(g, ['#7fb8ea', '#93c4ee', '#abd1f0', '#c9dcee', '#f0d3c8', '#f8c1a5'], 0, hz + 6);
+    const sx = Math.round(CW * .68), sy = hz - Math.round(3 + (Math.sin(t * .12) + 1) * 2.5);
+    disco(g, sx, sy, 11, '#fbe0b9');
+    disco(g, sx, sy, 9, '#ffd27a');
+    disco(g, sx, sy, 7, '#ffbf47');
+    nuvens(g, t, '#ffffff', '#f3d9e3', .9);
+    colinas(g, hz - 4, 4, .035, 1, '#9db6cf');
+    colinas(g, hz + 4, 5, .028, 3, '#80ae86');
+    colinas(g, hz + 14, 6, .022, 5, '#5f9a63');
+  }
+
+  // --- 1. campo de lírios ao sol ---
+  function campo(g, t) {
+    const hz = Math.round(CH * .56);
+    faixas(g, ['#4ea6ec', '#62b2ef', '#7cc0f2', '#99cff4', '#b8def6'], 0, hz + 8);
+    const sx = Math.round(CW * .18), sy = Math.round(CH * .16);
+    g.fillStyle = '#fff3b0';
+    for (let k = 0; k < 8; k++) {                     // raios girando bem devagar
+      const a = k * Math.PI / 4 + t * .15;
+      g.fillRect(Math.round(sx + Math.cos(a) * 12), Math.round(sy + Math.sin(a) * 12), 1, 1);
+      g.fillRect(Math.round(sx + Math.cos(a) * 13), Math.round(sy + Math.sin(a) * 13), 1, 1);
+    }
+    disco(g, sx, sy, 9, '#fff3b0');
+    disco(g, sx, sy, 7, '#ffe066');
+    nuvens(g, t, '#ffffff', '#dbe8f5', .8);
+    colinas(g, hz, 5, .03, 2, '#a3d483');
+    const meio = colinas(g, hz + 10, 6, .025, 4, '#7cc15e');
+    const frente = colinas(g, hz + 24, 7, .02, 1, '#59a646');
+    for (const l of liriosCampo) {
+      const x = Math.floor(l.u * CW);
+      const chao = (l.frente ? frente : meio)[x];
+      if (chao === undefined) continue;
+      const y = chao + 2 + l.sobe;
+      const balanco = reduzMovimento ? 0 : Math.round(Math.sin(t * 1.1 + l.fase));
+      g.fillStyle = '#2f7d32';
+      g.fillRect(x, y - 4, 1, 6);
+      g.drawImage(l.rosado ? LIRIO_MINI_ROSADO : LIRIO_MINI_BRANCO, x - 4 + balanco, y - 11);
+    }
+  }
+
+  // --- 2. praia à tarde ---
+  function praia(g, t) {
+    const hz = Math.round(CH * .52), costa = Math.round(CH * .8);
+    faixas(g, ['#3f97da', '#58a8e2', '#76b9e8', '#97cbee', '#bcdcef'], 0, hz);
+    const sx = Math.round(CW * .8), sy = Math.round(CH * .2);
+    disco(g, sx, sy, 9, '#fff8d0');
+    disco(g, sx, sy, 7, '#fff0a0');
+    nuvens(g, t, '#ffffff', '#d6e6f4', .7);
+    faixas(g, ['#1f6fae', '#2a80bf', '#3793cf', '#48a6dc'], hz, costa + 2);
+    // ondas: tracinhos claros que andam para os lados
+    g.fillStyle = '#b5e1f7';
+    for (let y = hz + 2, i = 0; y < costa - 1; y += 3, i++) {
+      const prof = (y - hz) / (costa - hz);
+      const dir = i % 2 ? 1 : -1;
+      const passo = 14 + (i % 3) * 3;
+      const desloc = ((t * (2 + prof * 5) * dir) % passo + passo) % passo;
+      for (let x = -passo; x < CW + passo; x += passo) g.fillRect(Math.round(x + desloc + (i * 5) % passo), y, 2 + Math.round(prof * 4), 1);
+    }
+    // brilho do sol na água
+    g.fillStyle = '#fff6c8';
+    for (let y = hz + 1; y < hz + 14; y += 2) {
+      const w = 3 + Math.round(Math.sin(t * 1.5 + y) * 2);
+      g.fillRect(sx - w, y, w * 2, 1);
+    }
+    // areia
+    const vai = reduzMovimento ? 0 : Math.round(Math.sin(t * .8) * 2);
+    g.fillStyle = '#f2d49b';
+    g.fillRect(0, costa + 2, CW, CH - costa);
+    for (const c of conchas) { g.fillStyle = c.cor; g.fillRect(Math.floor(c.u * CW), costa + 5 + Math.floor(c.v * (CH - costa - 6)), 1, 1); }
+    // areia molhada e espuma
+    for (let x = 0; x < CW; x++) {
+      const y = costa + vai + Math.round(Math.sin(x * .17 + t * 1.2));
+      g.fillStyle = '#ddb877'; g.fillRect(x, y + 2, 1, 2);
+      g.fillStyle = '#f4fbff'; g.fillRect(x, y, 1, 2);
+    }
+  }
+
+  // --- 3. pôr do sol ---
+  function porDoSol(g, t) {
+    const hz = Math.round(CH * .62);
+    faixas(g, ['#3b2266', '#5b2c7f', '#8b3a8f', '#c64f8a', '#ec7569', '#f6a057', '#fbc66a'], 0, hz);
+    const sx = Math.round(CW * .5), sy = hz + 1 - Math.round(4 + (Math.sin(t * .1) + 1) * 2);
+    disco(g, sx, sy, 15, '#f79a6b');
+    disco(g, sx, sy, 12, '#ffd166');
+    g.fillStyle = '#f79a6b';                          // listras no sol, estilo retrô
+    for (let y = sy + 3; y < hz; y += 3) g.fillRect(sx - 13, y, 27, 1);
+    faixas(g, ['#5a2f78', '#4b2a6e', '#3d235f'], hz, CH);
+    g.fillStyle = '#f6a057';                          // reflexo do sol no mar
+    for (let y = hz + 1, i = 0; y < CH; y += 2, i++) {
+      const w = Math.max(1, 12 - i) + Math.round(Math.sin(t * 1.4 + i) * 2);
+      if (w > 0) g.fillRect(sx - w, y, w * 2, 1);
+    }
+    // morros escuros nos cantos
+    g.fillStyle = '#2a1745';
+    for (let x = 0; x < CW; x++) {
+      const borda = Math.min(x, CW - x) / CW;
+      if (borda > .22) continue;
+      const y = Math.round(hz - (.22 - borda) * 60 + Math.sin(x * .3) * 1.2);
+      g.fillRect(x, y, 1, CH - y);
+    }
+    // pássaros voando
+    g.fillStyle = '#2a1840';
+    for (let i = 0; i < 5; i++) {
+      const x = Math.round(((t * 5 + i * (CW + 30) / 5) % (CW + 30)) - 15);
+      const y = Math.round(CH * (.14 + (i % 3) * .07) + Math.sin(t * 1.3 + i) * 2);
+      const asaCima = Math.floor(t * 2.2 + i) % 2 === 0;
+      const pontos = asaCima ? [[-2, -1], [-1, 0], [0, 1], [1, 0], [2, -1]] : [[-2, 1], [-1, 0], [0, 0], [1, 0], [2, 1]];
+      pontos.forEach(([dx, dy]) => g.fillRect(x + dx, y + dy, 1, 1));
+    }
+  }
+
+  // --- 4. noite estrelada ---
+  function noite(g, t) {
+    const hz = Math.round(CH * .7);
+    faixas(g, ['#070b26', '#0c1234', '#121a45', '#1a2457', '#243069'], 0, hz + 4);
+    const forte = brilhoFinal;
+    for (const e of estrelas) {
+      const onda = Math.sin(t * e.vel + e.fase);
+      if (onda < -.25 - forte * .6) continue;
+      g.fillStyle = e.cor;
+      g.fillRect(e.x, e.y, 1, 1);
+      if (e.grande || (forte > .5 && onda > .55)) {
+        g.fillRect(e.x - 1, e.y, 3, 1);
+        g.fillRect(e.x, e.y - 1, 1, 3);
+      }
+    }
+    // lua cheia
+    const mx = Math.round(CW * .78), my = Math.round(CH * .18);
+    disco(g, mx, my, 13 + Math.round(forte * 2), '#1c2864');
+    disco(g, mx, my, 11, '#2a377a');
+    disco(g, mx, my, 9, '#f4f1d0');
+    disco(g, mx - 3, my - 2, 2, '#ddd6a6');
+    disco(g, mx + 3, my + 3, 1, '#ddd6a6');
+    disco(g, mx + 2, my - 4, 1, '#e8e2b8');
+    // estrelas cadentes
+    const rastro = ['#ffffff', '#e6ecff', '#b8c6ff', '#8193e0', '#56649f', '#3a477f'];
+    for (const c of cadentes) {
+      rastro.forEach((cor, i) => {
+        g.fillStyle = cor;
+        g.fillRect(Math.round(c.x - c.dx * i * 1.4), Math.round(c.y - c.dy * i * 1.4), 1, 1);
+      });
+    }
+    colinas(g, hz, 4, .03, 2, '#0f1838');
+    colinas(g, hz + 10, 5, .024, 4, '#0a102a');
+  }
+
+  const CENAS = [amanhecer, campo, praia, porDoSol, noite];
+
+  function desenharCeu(t) {
+    const pos = progresso * (CENAS.length - 1);
+    const i = Math.min(CENAS.length - 2, Math.floor(pos));
+    const f = pos - i;
+    if (f > .995) { CENAS[i + 1](cg, t); return; }
+    CENAS[i](cg, t);
+    if (f > .005) {
+      // desenha a próxima cena por cima, cada vez mais forte: as cores se misturam aos poucos
+      CENAS[i + 1](bg, t);
+      cg.globalAlpha = f;
+      cg.drawImage(buffer, 0, 0);
+      cg.globalAlpha = 1;
+    }
+  }
+
+  function atualizarCadentes(dt) {
+    proximaCadente -= dt;
+    if (proximaCadente <= 0 && progresso > .7 && !reduzMovimento) {
+      const sorte = Math.random;
+      cadentes.push({ x: CW * (.15 + sorte() * .6), y: CH * (.05 + sorte() * .2), dx: 1, dy: .45, vida: 1.1 });
+      proximaCadente = brilhoFinal > .5 ? 1.8 + Math.random() * 1.5 : 4 + Math.random() * 4;
+    }
+    for (let i = cadentes.length - 1; i >= 0; i--) {
+      const c = cadentes[i];
+      c.x += c.dx * 55 * dt; c.y += c.dy * 55 * dt; c.vida -= dt;
+      if (c.vida <= 0) cadentes.splice(i, 1);
+    }
+  }
+
+  /* ============================================================
+     5. MOLDURA: buquês, chocolates, pétalas caindo e corações
+     ============================================================ */
+  const moldura = document.getElementById('moldura');
+  const mg = moldura.getContext('2d');
+  let MF = 3, MW = 0, MH = 0, BANDA = 32, LADO = 32;
+  let itens = [], petalas = [], coracoes = [];
+  let proximaPetala = 2, proximoCoracao = 0;
+
+  function prepararMoldura() {
+    const celular = ehCelular();
+    MF = celular ? 2 : 3;
+    BANDA = 32;                       // 32 x 3 = 96px no computador, 32 x 2 = 64px no celular
+    LADO = celular ? 10 : 32;         // 10 x 2 = 20px no celular
+    MW = Math.ceil(innerWidth / MF);
+    MH = Math.ceil(innerHeight / MF);
+    moldura.width = MW; moldura.height = MH;
+    moldura.style.width = MW * MF + 'px';
+    moldura.style.height = MH * MF + 'px';
+    mg.imageSmoothingEnabled = false;
+
+    itens = [];
+    let n = 0;
+    const doce = () => (n++ % 2 === 0 ? { tipo: 'bombom', fase: Math.random() } : { tipo: 'barra', img: BARRAS[n % BARRAS.length] });
+
+    // linha de cima e linha de baixo
+    function linha(yBase, x0, x1) {
+      const qtd = Math.max(2, Math.floor((x1 - x0) / 58));
+      const passo = (x1 - x0) / qtd;
+      for (let k = 0; k < qtd; k++) {
+        const cx = Math.round(x0 + (k + .5) * passo);
+        itens.push({ tipo: 'buque', buque: BUQUES[(k + (yBase > MH / 2 ? 1 : 0)) % 3], x: cx - BUQUE_L / 2, y: yBase - BUQUE_A, fase: k * 1.7 + yBase });
+        if (k < qtd - 1) {
+          const d = doce();
+          const meio = Math.round(x0 + (k + 1) * passo);
+          const img = d.tipo === 'bombom' ? BOMBOM : d.img;
+          itens.push({ ...d, x: meio - Math.floor(img.width / 2), y: yBase - img.height - 6 });
+        }
+      }
+    }
+    linha(BANDA - 1, 0, MW);
+    linha(MH + 1, 0, MW);
+
+    // laterais
+    if (!celular) {
+      const y0 = BANDA + 4, y1 = MH - BANDA - 4;
+      const qtd = Math.max(1, Math.floor((y1 - y0) / 62));
+      const passo = (y1 - y0) / qtd;
+      for (const lado of [0, 1]) {
+        const cx = lado ? MW - LADO / 2 : LADO / 2;
+        for (let k = 0; k < qtd; k++) {
+          const cy = Math.round(y0 + (k + .5) * passo);
+          itens.push({ tipo: 'buque', buque: BUQUES[(k + lado) % 3], x: Math.round(cx - BUQUE_L / 2), y: cy - BUQUE_A / 2, fase: k * 2.3 + lado * 9 });
+          const d = doce();
+          const img = d.tipo === 'bombom' ? BOMBOM : d.img;
+          const cy2 = Math.round(y0 + (k + 1) * passo);
+          if (k < qtd - 1 || qtd === 1) itens.push({ ...d, x: Math.round(cx - img.width / 2), y: (qtd === 1 ? cy + BUQUE_A / 2 + 6 : cy2 - img.height / 2) });
+        }
+      }
+    } else {
+      // celular: só florzinhas pequenas nas laterais
+      const y0 = BANDA + 6, y1 = MH - BANDA - 6;
+      const qtd = Math.max(2, Math.floor((y1 - y0) / 24));
+      for (const lado of [0, 1]) {
+        for (let k = 0; k < qtd; k++) {
+          const cy = Math.round(y0 + (k + .5) * (y1 - y0) / qtd);
+          itens.push({ tipo: 'mini', img: (k + lado) % 2 ? LIRIO_MINI_ROSADO : LIRIO_MINI_BRANCO, x: lado ? MW - 10 : 1, y: cy - 4, fase: k + lado * 3 });
+        }
+      }
+    }
+  }
+
+  // Ramo de folhas que liga os buquês (desenhado antes deles)
+  function desenharRamos() {
+    mg.fillStyle = '#3e8e41';
+    const folha = (x, y) => { mg.fillStyle = '#6fbf6a'; mg.fillRect(x, y, 2, 1); mg.fillStyle = '#3e8e41'; };
+    for (let x = 0; x < MW; x++) {
+      const yc = BANDA - 4 + Math.round(Math.sin(x * .22));
+      const yb = MH - BANDA + 3 + Math.round(Math.sin(x * .22 + 1.5));
+      mg.fillRect(x, yc, 1, 1);
+      mg.fillRect(x, yb, 1, 1);
+      if (x % 7 === 0) { folha(x, yc + (x % 14 ? -1 : 1)); folha(x, yb + (x % 14 ? -1 : 1)); }
+    }
+    for (let y = BANDA; y < MH - BANDA; y++) {
+      const xe = LADO - 3 + Math.round(Math.sin(y * .22));
+      const xd = MW - LADO + 2 + Math.round(Math.sin(y * .22 + 2));
+      mg.fillRect(xe, y, 1, 1);
+      mg.fillRect(xd, y, 1, 1);
+      if (y % 7 === 0) {
+        mg.fillStyle = '#6fbf6a';
+        mg.fillRect(xe + (y % 14 ? -1 : 1), y, 1, 2);
+        mg.fillRect(xd + (y % 14 ? -1 : 1), y, 1, 2);
+        mg.fillStyle = '#3e8e41';
+      }
+    }
+  }
+
+  function desenharBuque(item, t) {
+    const { buque, x, y } = item;
+    mg.save();
+    if (buque.espelhar) { mg.translate(x + BUQUE_L, y); mg.scale(-1, 1); } else mg.translate(x, y);
+    mg.drawImage(buque.base, 0, 0);
+    buque.cabecas.forEach((c, i) => {
+      // balanço de 1 pixel, devagar: movimento típico de pixel art
+      const dx = reduzMovimento ? 0 : Math.round(Math.sin(t * .9 + item.fase + i * 1.3) * 1.2);
+      mg.drawImage(c.img, c.x + dx, c.y);
+    });
+    // o papel do buquê é desenhado de novo por cima dos cabos
+    mg.drawImage(buque.base, 0, 19, BUQUE_L, BUQUE_A - 19, 0, 19, BUQUE_L, BUQUE_A - 19);
+    mg.restore();
+  }
+
+  function desenharMoldura(t, dt) {
+    mg.clearRect(0, 0, MW, MH);
+    desenharRamos();
+    for (const item of itens) {
+      if (item.tipo === 'buque') desenharBuque(item, t);
+      else if (item.tipo === 'mini') {
+        const dx = reduzMovimento ? 0 : Math.round(Math.sin(t + item.fase));
+        mg.drawImage(item.img, item.x + dx, item.y);
+      } else if (item.tipo === 'bombom') {
+        mg.drawImage(BOMBOM, item.x, item.y);
+        // brilho que aparece e some no papel dourado
+        const ciclo = (t * .45 + item.fase) % 1;
+        if (!reduzMovimento && ciclo < .22) {
+          mg.fillStyle = '#ffffff';
+          mg.fillRect(item.x + 3, item.y + 2, 1, 1);
+          if (ciclo > .05 && ciclo < .17) {
+            mg.fillRect(item.x + 2, item.y + 2, 3, 1);
+            mg.fillRect(item.x + 3, item.y + 1, 1, 3);
+          }
+        }
+      } else if (item.tipo === 'barra') {
+        mg.drawImage(item.img, item.x, item.y);
+      }
+    }
+
+    // pétalas de lírio caindo de vez em quando
+    if (!reduzMovimento) {
+      proximaPetala -= dt;
+      if (proximaPetala <= 0) {
+        const buques = itens.filter(i => i.tipo === 'buque' || i.tipo === 'mini');
+        const origem = buques[Math.floor(Math.random() * buques.length)];
+        if (origem) petalas.push({ x0: origem.x + 6 + Math.random() * 18, y: origem.y + 6, vel: 5 + Math.random() * 4, fase: Math.random() * 6, rosada: Math.random() > .5 });
+        proximaPetala = 2.5 + Math.random() * 3.5;
+      }
+    }
+    for (let i = petalas.length - 1; i >= 0; i--) {
+      const p = petalas[i];
+      p.y += p.vel * dt;
+      const x = Math.round(p.x0 + Math.sin(t * 1.1 + p.fase) * 5);
+      const y = Math.round(p.y);
+      const virada = Math.floor(t * 2 + p.fase) % 2;
+      mg.fillStyle = p.rosada ? '#ffc6de' : '#fffaf5';
+      if (virada) { mg.fillRect(x, y, 2, 1); mg.fillRect(x + 1, y + 1, 2, 1); }
+      else { mg.fillRect(x, y, 1, 2); mg.fillRect(x + 1, y + 1, 1, 2); }
+      mg.fillStyle = p.rosada ? '#e0609a' : '#e6dbf2';
+      mg.fillRect(x + (virada ? 2 : 1), y + 1 + (virada ? 0 : 1), 1, 1);
+      if (y > MH) petalas.splice(i, 1);
+    }
+
+    // corações subindo no final
+    if (brilhoFinal > .5 && !reduzMovimento) {
+      proximoCoracao -= dt;
+      if (proximoCoracao <= 0) {
+        coracoes.push({ x0: LADO + 4 + Math.random() * (MW - LADO * 2 - 12), y: MH - BANDA + 4, vel: 8 + Math.random() * 5, fase: Math.random() * 6, img: CORACOES[Math.floor(Math.random() * CORACOES.length)] });
+        proximoCoracao = .55 + Math.random() * .5;
+      }
+    }
+    for (let i = coracoes.length - 1; i >= 0; i--) {
+      const c = coracoes[i];
+      c.y -= c.vel * dt;
+      const x = Math.round(c.x0 + Math.sin(t * 1.3 + c.fase) * 3);
+      const alfa = limitar((c.y - BANDA) / 30, 0, 1);
+      mg.globalAlpha = alfa;
+      mg.drawImage(c.img, x, Math.round(c.y));
+      mg.globalAlpha = 1;
+      if (alfa <= 0) coracoes.splice(i, 1);
+    }
+  }
+
+  /* ============================================================
+     6. ESTADO DA CARTA E MÁQUINA DE ESCREVER
+     ============================================================ */
+  const areaEnvelope = document.getElementById('areaEnvelope');
+  const envelope = document.getElementById('envelope');
+  const dicaAbrir = document.getElementById('dicaAbrir');
+  const papelMini = document.getElementById('papelMini');
+  const carta = document.getElementById('carta');
+  const rolagem = document.getElementById('rolagem');
+  const texto = document.getElementById('texto');
+  const botaoLerDeNovo = document.getElementById('lerDeNovo');
+  const botaoMostrarTudo = document.getElementById('mostrarTudo');
+  const vira = document.getElementById('vira');
+
+  if (telaDeToque) dicaAbrir.textContent = 'Toque para abrir';
+  botaoMostrarTudo.textContent = telaDeToque ? 'toque aqui para mostrar tudo' : 'clique aqui para mostrar tudo';
+  if (!telaDeToque) document.querySelector('.dica-foto').textContent = 'clique na foto para virar';
+
+  let progresso = 0;          // 0 = amanhecer ... 1 = noite (o que está na tela)
+  let brilhoFinal = 0;        // 0 a 1: estrelas mais fortes e corações
+  let aberta = false, concluido = false, voltando = false;
+  let passos = [], indice = 0, digitados = 0, totalDigitavel = 0, geracao = 0;
+  let linhaAtual = null, textoAtual = null, seguirFim = true;
+  const cursor = document.createElement('span');
+  cursor.className = 'cursor';
+
+  // Texto completo para leitores de tela
+  document.getElementById('textoLeitor').textContent = LINHAS.map(l => l.texto.replace(/\{\w+\}/g, '')).join(' ');
+
+  // Transforma as linhas em uma fila de passos: nova linha, letra ou ícone
+  LINHAS.forEach(linha => {
+    passos.push({ tipo: 'linha', classe: linha.classe });
+    linha.texto.split(/(\{\w+\})/).forEach(parte => {
+      if (!parte) return;
+      if (/^\{\w+\}$/.test(parte)) passos.push({ tipo: 'icone', nome: parte.slice(1, -1) });
+      else for (const letra of parte) passos.push({ tipo: 'letra', letra });
+    });
+  });
+  totalDigitavel = passos.filter(p => p.tipo !== 'linha').length;
+
+  function aplicarPasso(p) {
+    if (p.tipo === 'linha') {
+      linhaAtual = document.createElement('p');
+      if (p.classe) linhaAtual.className = p.classe;
+      texto.appendChild(linhaAtual);
+      linhaAtual.appendChild(cursor);
+      textoAtual = null;
+      return;
+    }
+    if (p.tipo === 'letra') {
+      if (!textoAtual) { textoAtual = document.createTextNode(''); linhaAtual.insertBefore(textoAtual, cursor); }
+      textoAtual.data += p.letra;
+    } else {
+      linhaAtual.insertBefore(criarIcone(p.nome), cursor);
+      textoAtual = null;
+    }
+    digitados++;
+  }
+
+  // Tempo de espera depois de cada passo (pausas maiores em vírgulas e pontos)
+  function espera(p) {
+    if (p.tipo === 'linha') return 380;
+    if (p.tipo === 'icone') return 220;
+    if (p.letra === ',') return 170;
+    if ('.!?:'.includes(p.letra)) return 320;
+    if (p.letra === ' ') return 28;
+    return 30 + Math.random() * 18;
+  }
+
+  function digitar(minhaGeracao) {
+    if (minhaGeracao !== geracao) return;          // a carta foi reiniciada: para esta digitação
+    if (indice >= passos.length) { terminar(); return; }
+    const p = passos[indice++];
+    aplicarPasso(p);
+    acompanharTexto();
+    setTimeout(() => digitar(minhaGeracao), espera(p));
+  }
+
+  function mostrarTudo() {
+    if (concluido || !aberta) return;
+    geracao++;
+    while (indice < passos.length) aplicarPasso(passos[indice++]);
+    terminar();
+  }
+
+  function terminar() {
+    concluido = true;
+    cursor.remove();
+    botaoMostrarTudo.hidden = true;
+    botaoLerDeNovo.hidden = false;
+    botaoLerDeNovo.classList.remove('surgir');
+    void botaoLerDeNovo.offsetWidth;
+    botaoLerDeNovo.classList.add('surgir');
+    acompanharTexto();
+  }
+
+  // Enquanto digita, a carta rola sozinha para acompanhar o texto
+  function acompanharTexto() {
+    if (seguirFim) rolagem.scrollTop = rolagem.scrollHeight;
+  }
+  // Se ela rolar para cima para olhar a foto, a carta para de rolar sozinha
+  ['wheel', 'touchmove'].forEach(ev => rolagem.addEventListener(ev, () => { if (!concluido) seguirFim = false; }, { passive: true }));
+  rolagem.addEventListener('scroll', () => {
+    if (rolagem.scrollHeight - rolagem.scrollTop - rolagem.clientHeight < 30) seguirFim = true;
+  }, { passive: true });
+
+  function comecarCarta() {
+    geracao++;
+    indice = 0; digitados = 0;
+    concluido = false; voltando = false; seguirFim = true;
+    texto.textContent = '';
+    botaoLerDeNovo.hidden = true;
+    botaoMostrarTudo.hidden = false;
+    if (reduzMovimento) { mostrarTudo(); return; }
+    const minha = geracao;
+    setTimeout(() => digitar(minha), 450);
+  }
+
+  // Para onde a paisagem deve ir agora
+  function alvoDoProgresso() {
+    if (!aberta || voltando) return 0;
+    if (!concluido) return digitados / totalDigitavel;          // o dia passa enquanto o texto é escrito
+    const maximo = rolagem.scrollHeight - rolagem.clientHeight;  // depois, acompanha a rolagem
+    return maximo > 12 ? limitar(rolagem.scrollTop / (maximo - 4), 0, 1) : 1;
+  }
+
+  /* ---------- Abrir o envelope ---------- */
+  function abrirEnvelope() {
+    if (aberta) return;
+    aberta = true;
+    envelope.classList.add('aberto');
+    envelope.setAttribute('aria-disabled', 'true');
+    dicaAbrir.style.visibility = 'hidden';
+    setTimeout(crescerCarta, reduzMovimento ? 50 : 1900);
+  }
+
+  // A cartinha sai do envelope e cresce até virar a carta grande
+  function crescerCarta() {
+    const de = papelMini.getBoundingClientRect();
+    carta.hidden = false;
+    const para = carta.getBoundingClientRect();
+    carta.style.transition = 'none';
+    carta.style.transform = `translate(${de.left - para.left}px, ${de.top - para.top}px) scale(${de.width / para.width}, ${de.height / para.height})`;
+    void carta.offsetWidth;                                    // obriga o navegador a aplicar a posição inicial
+    carta.style.transition = reduzMovimento ? 'none' : 'transform .95s cubic-bezier(.2, .8, .2, 1)';
+    carta.style.transform = 'none';
+    areaEnvelope.classList.add('sumindo');
+    setTimeout(() => {
+      areaEnvelope.hidden = true;
+      carta.classList.add('pronta');
+      comecarCarta();
+    }, reduzMovimento ? 60 : 1000);
+  }
+
+  envelope.addEventListener('click', abrirEnvelope);
+
+  // Clicar no texto mostra tudo de uma vez
+  texto.addEventListener('click', mostrarTudo);
+  botaoMostrarTudo.addEventListener('click', mostrarTudo);
+
+  // Virar a polaroid
+  vira.addEventListener('click', () => vira.classList.toggle('virada'));
+
+  // Se a foto não carregar, aparece um coração pixelado no lugar
+  function protegerFoto(img) {
+    const trocar = () => {
+      const c = novoCanvas(72, 112), g = c.getContext('2d');
+      g.fillStyle = '#fff4dc'; g.fillRect(0, 0, 72, 112);
+      g.imageSmoothingEnabled = false;
+      g.drawImage(CORACOES[0], 15, 38, 42, 36);
+      c.className = 'foto';
+      c.setAttribute('role', 'img');
+      c.setAttribute('aria-label', 'Coração em pixel art');
+      img.replaceWith(c);
+    };
+    img.addEventListener('error', trocar);
+    if (img.complete && img.naturalWidth === 0) trocar();
+  }
+  protegerFoto(document.getElementById('foto1'));
+  protegerFoto(document.getElementById('foto2'));
+
+  /* ---------- Ler de novo ---------- */
+  botaoLerDeNovo.addEventListener('click', () => {
+    voltando = true;
+    rolagem.scrollTo({ top: 0, behavior: reduzMovimento ? 'auto' : 'smooth' });
+    setTimeout(comecarCarta, reduzMovimento ? 0 : 1100);
+  });
+
+  /* ============================================================
+     7. LAÇO DE ANIMAÇÃO (cerca de 30 quadros por segundo)
+     ============================================================ */
+  let tempo = 0, ultimo = performance.now(), ultimoQuadro = 0;
+  function quadro(agora) {
+    const dt = Math.min(.1, (agora - ultimo) / 1000);
+    ultimo = agora;
+    tempo += dt;
+
+    // a paisagem anda até o alvo, sempre suave
+    const alvo = alvoDoProgresso();
+    const velMax = (voltando ? .9 : .45) * dt;
+    progresso += limitar((alvo - progresso) * Math.min(1, dt * 2.2), -velMax, velMax);
+    if (Math.abs(alvo - progresso) < .0005) progresso = alvo;
+    const alvoBrilho = concluido && progresso > .97 ? 1 : 0;
+    brilhoFinal += (alvoBrilho - brilhoFinal) * Math.min(1, dt * 1.5);
+
+    // se o tamanho da tela mudou (girar o celular, barra do navegador), redesenha tudo
+    if (innerWidth !== larguraPronta || innerHeight !== alturaPronta) redimensionar();
+
+    if (agora - ultimoQuadro >= 32) {
+      const passo = (agora - ultimoQuadro) / 1000;
+      ultimoQuadro = agora;
+      atualizarCadentes(Math.min(passo, .1));
+      desenharCeu(tempo);
+      desenharMoldura(tempo, Math.min(passo, .1));
+    }
+    requestAnimationFrame(quadro);
+  }
+
+  let larguraPronta = 0, alturaPronta = 0;
+  function redimensionar() {
+    larguraPronta = innerWidth;
+    alturaPronta = innerHeight;
+    prepararCeu();
+    prepararMoldura();
+  }
+  let esperaRedimensionar;
+  addEventListener('resize', () => {
+    clearTimeout(esperaRedimensionar);
+    esperaRedimensionar = setTimeout(redimensionar, 120);
+  });
+
+  redimensionar();
+  requestAnimationFrame(quadro);
+})();
+</script>
+
+</body>
+</html>
